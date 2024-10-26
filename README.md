@@ -1,4 +1,4 @@
-# Ratel_Private
+# Ratel
 
 ## Quick start
 ```shell
