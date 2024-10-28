@@ -1,6 +1,6 @@
 # Ratel
 
-This artifact provides a guid to replicate the primary experiments in this paper. You can follow this repository to reproduce the experimental results about Ratel's maximum trainable model sizes, batch sizes and throughput in our paper. The documentation and auto-run script mainly focus on reproducing results in Subsection V-B and you can adjust the code to reproduce results in other sections. 
+This artifact provides a guide to replicate the primary experiments in this paper. You can follow this repository to reproduce the experimental results about Ratel's maximum trainable model sizes, batch sizes and throughput in our paper. The documentation and auto-run script mainly focus on reproducing results in Subsection V-B and you can adjust the code to reproduce results in other sections. 
 
 ## Environment Setup
 
@@ -8,7 +8,7 @@ This artifact provides a guid to replicate the primary experiments in this paper
 
 Ratel aggregates the I/O bandwidth of multiple SSDs by configuring a RAID array for efficient model states and activation offloading. Therefore, we provide a script to configure this array.
 
-First, modify the `make_raid.sh` to meet your own need. The script in this repo is used to configure the drives `/dev/nvme0n1` to `/dev/nvme11n1` into an array. You can adjust the line 23 to change the drives you want to set up.
+First, modify the `make_raid.sh` to meet your own needs. The script in this repo is used to configure the drives `/dev/nvme0n1` to `/dev/nvme11n1` into an array. You can adjust the line 23 to change the drives you want to set up.
 
 After configuring the script, you can run the script to set up the RAID array. You might need a root permission to do so:
 
@@ -22,11 +22,11 @@ After configuring the script, you can run the script to set up the RAID array. Y
 conda create -n ratel python=3.10
 pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu118
 
-# If there has different CUDA version, you should specify the CUDA version
+# If there are different CUDA versions, you should specify the CUDA version
 # export CUDA_HOME=/usr/local/cuda-11.8
 pip install flash-attn==1.0.4
 
-# The following two packages are to fulfill the requirements of the ogb
+# The following two packages are to fulfill the requirements of existing packages
 pip install six==1.16.0
 pip install scikit-learn
 ```
@@ -41,7 +41,7 @@ bash run.sh
 
 ### Limiting the Memory Size
 
-Experiments in Subsection V-B requires adjusting the main memory capacity. Instead of manually adding and removing the machine's DRAM, you can consider pinning the main memory via huge page so that these memory spaces cannot be utilized by Ratel. 
+Experiments in Subsection V-B require adjusting the main memory capacity. Instead of manually adding and removing the machine's DRAM, you can consider pinning the main memory via huge page so that these memory spaces cannot be utilized by Ratel. 
 
 You can use the following script (root permission required) to pin the main memory
 
@@ -57,7 +57,7 @@ You can check the pinned memory by using the following command.
 $ cat /proc/meminfo | grep Huge
 ```
 
-For example, the following output indicates the memory pinned bu huge page is 1024(HugePages_Total)*2048kB(Hugepagesize)=2GB.
+For example, the following output indicates the memory pinned by huge page is 1024(HugePages_Total)*2048kB(Hugepagesize)=2GB.
 
 ```
 AnonHugePages:         0 kB
