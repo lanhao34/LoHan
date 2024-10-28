@@ -5,7 +5,7 @@ from nvtx import nvtx_wrap
 import argparse
 import torch
 import torch.nn as nn
-from myDeep.ops.CPUAdam import DeepSpeedCPUAdam
+from op_ds.ops.CPUAdam import DeepSpeedCPUAdam
 import torch.multiprocessing as mp
 from time import time
 from gpt_model import GPT2Model, GPT2Config, act_stream, set_training

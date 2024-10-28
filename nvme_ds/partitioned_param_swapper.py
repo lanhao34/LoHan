@@ -12,8 +12,8 @@ from enum import Enum
 import torch
 # from deepspeed import comm as dist
 # from deepspeed.accelerator import get_accelerator
-from myDeep.accelerator import get_accelerator
-from myDeep.ops.op_builder.async_io import AsyncIOBuilder
+from op_ds.accelerator import get_accelerator
+from op_ds.ops.op_builder.async_io import AsyncIOBuilder
 # from deepspeed.ops.op_builder import AsyncIOBuilder
 from nvme_ds.constants import *
 from nvme_ds.utils import swap_in_tensors, swap_out_tensors, MIN_AIO_BYTES, AIO_ALIGNED_BYTES, print_object, SwapBufferPool

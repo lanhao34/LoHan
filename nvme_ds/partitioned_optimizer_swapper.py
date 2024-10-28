@@ -8,9 +8,9 @@ Functionality of swapping optimizer tensors to/from (NVMe) storage devices.
 
 import torch
 
-from myDeep.utils.logging import logger
+from op_ds.utils.logging import logger
 # from deepspeed.ops.op_builder import AsyncIOBuilder
-from myDeep.ops.op_builder.async_io import AsyncIOBuilder
+from op_ds.ops.op_builder.async_io import AsyncIOBuilder
 
 from nvme_ds.constants import *
 from nvme_ds.utils import swap_in_tensors, swap_out_tensors, print_object, \
