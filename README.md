@@ -201,8 +201,8 @@ Result:
 
 Some of the code in this project is modified from the [DeepSpeed](https://github.com/microsoft/DeepSpeed) repository, we appreciate the contributions of the original repository authors.
 
-* myDeep/accelerator/real_accelerator.py
-* myDeep/ops/op_builder/all_ops.py
-* myDeep/ops/op_builder/builder.py
-* myDeep/ops/CPUAdam.py
+* op_ds/accelerator/real_accelerator.py
+* op_ds/ops/op_builder/all_ops.py
+* op_ds/ops/op_builder/builder.py
+* op_ds/ops/CPUAdam.py
 * nvme_ds

@@ -7,7 +7,7 @@ Functionality of swapping tensors to/from (NVMe) storage devices.
 """
 
 import torch
-from myDeep.utils.logging import logger
+from op_ds.utils.logging import logger
 from nvtx import nvtx_wrap
 from see_mem import see_memory_usage
 

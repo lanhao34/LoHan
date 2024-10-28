@@ -5,7 +5,7 @@
 """
 Functionality of swapping optimizer tensors to/from (NVMe) storage devices.
 """
-from myDeep.ops.op_builder.async_io import AsyncIOBuilder
+from op_ds.ops.op_builder.async_io import AsyncIOBuilder
 # from deepspeed.ops.op_builder import AsyncIOBuilder
 # from deepspeed import comm as dist
 
