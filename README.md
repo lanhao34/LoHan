@@ -1,12 +1,12 @@
-# Ratel
+# LoHan ICDE 2025 Artifact
 
-This artifact provides a guide to replicate the primary experiments in this paper. You can follow this repository to reproduce the experimental results about Ratel's maximum trainable model sizes, batch sizes and throughput in our paper. The documentation and auto-run script mainly focus on reproducing results in Subsection V-B and you can adjust the code to reproduce results in other sections. 
+This artifact provides a guide to replicate the primary experiments in this paper. You can follow this repository to reproduce the experimental results about LoHan's maximum trainable model sizes, batch sizes and throughput in our paper. The documentation and auto-run script mainly focus on reproducing results in Subsection V-B and you can adjust the code to reproduce results in other sections. 
 
 ## Environment Setup
 
 ### SSD Configuration
 
-Ratel aggregates the I/O bandwidth of multiple SSDs by configuring a RAID array for efficient model states and activation offloading. Therefore, we provide a script to configure this array.
+LoHan aggregates the I/O bandwidth of multiple SSDs by configuring a RAID array for efficient model states and activation offloading. Therefore, we provide a script to configure this array.
 
 First, modify the `make_raid.sh` to meet your own needs. The script in this repo is used to configure the drives `/dev/nvme0n1` to `/dev/nvme11n1` into an array. You can adjust the line 23 to change the drives you want to set up.
 
@@ -19,7 +19,7 @@ After configuring the script, you can run the script to set up the RAID array. Y
 ### Installing the Python packages
 
 ```shell
-conda create -n ratel python=3.10
+conda create -n lohan python=3.10
 pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu118
 
 # If there are different CUDA versions, you should specify the CUDA version
@@ -31,9 +31,9 @@ pip install six==1.16.0
 pip install scikit-learn
 ```
 
-## Running Ratel
+## Running LoHan
 
-We provide a script to run Ratel. You can adjust the script to reproduce the results. 
+We provide a script to run LoHan. You can adjust the script to reproduce the results. 
 
 ```shell
 bash run.sh
