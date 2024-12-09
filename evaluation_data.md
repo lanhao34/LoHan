@@ -1,6 +1,6 @@
-# Evaluation Data of Ratel 
+# Evaluation Data of LoHan
 
-Here we provide the major evaluation results in our paper (while the others generally reuse these experimental data when evaluating Ratel). You can use this to check the correctness of your results. All the throughput data are measured in TFLOPS, which is directly output by the script. 
+Here we provide the major evaluation results in our paper (while the others generally reuse these experimental data when evaluating LoHan). You can use this to check the correctness of your results. All the throughput data are measured in TFLOPS, which is directly output by the script. 
 
 All the data here are produced under the testbed whose configuration is listed below.
 
