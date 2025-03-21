@@ -1,12 +1,16 @@
-# LoHan ICDE 2025 Artifact
+# LoHan 
 
-This artifact provides a guide to replicate the primary experiments in this paper. You can follow this repository to reproduce the experimental results about LoHan's maximum trainable model sizes, batch sizes and throughput in our paper. The documentation and auto-run script mainly focus on reproducing results in Subsection V-B and you can adjust the code to reproduce results in other sections. 
+LoHan is a <ins>Lo</ins>w-cost <ins>H</ins>igh-perform<ins>an</ins>ce framework for large model fine-tuning. This repository now includes efficient data-parallel fine-tuning code (Ratel, ICDE 2025) and more exciting features are coming soon!
 
-## Environment Setup
+## Ratel ICDE 2025 Artifact
 
-### SSD Configuration
+This artifact provides a guide to replicate the primary experiments in this paper. You can follow this repository to reproduce the experimental results about Ratel's maximum trainable model sizes, batch sizes and throughput in our paper. The documentation and auto-run script mainly focus on reproducing results in Subsection V-B and you can adjust the code to reproduce results in other sections. 
 
-LoHan aggregates the I/O bandwidth of multiple SSDs by configuring a RAID array for efficient model states and activation offloading. Therefore, we provide a script to configure this array.
+### Environment Setup
+
+#### SSD Configuration
+
+Ratel aggregates the I/O bandwidth of multiple SSDs by configuring a RAID array for efficient model states and activation offloading. Therefore, we provide a script to configure this array.
 
 First, modify the `make_raid.sh` to meet your own needs. The script in this repo is used to configure the drives `/dev/nvme0n1` to `/dev/nvme11n1` into an array. You can adjust the line 23 to change the drives you want to set up.
 
@@ -16,10 +20,10 @@ After configuring the script, you can run the script to set up the RAID array. Y
 ./make_raid.sh
 ```
 
-### Installing the Python packages
+#### Installing the Python packages
 
 ```shell
-conda create -n lohan python=3.10
+conda create -n ratel python=3.10
 pip install torch==2.0.0 torchvision==0.15.1 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cu118
 
 # If there are different CUDA versions, you should specify the CUDA version
@@ -31,15 +35,15 @@ pip install six==1.16.0
 pip install scikit-learn
 ```
 
-## Running LoHan
+### Running Ratel
 
-We provide a script to run LoHan. You can adjust the script to reproduce the results. 
+We provide a script to run Ratel. You can adjust the script to reproduce the results. 
 
 ```shell
 bash run.sh
 ```
 
-### Limiting the Memory Size
+#### Limiting the Memory Size
 
 Experiments in Subsection V-B require adjusting the main memory capacity. Instead of manually adding and removing the machine's DRAM, you can consider pinning the main memory via huge page so that these memory spaces cannot be utilized by Ratel. 
 
@@ -71,11 +75,11 @@ Hugepagesize:       2048 kB
 Hugetlb:         2097152 kB
 ```
 
-### Benchmark Results
+#### Benchmark Results
 
 Please refer to [here](evaluation_data.md) for our raw evaluation data in our paper that might help for your reproduing. 
 
-## Acknowledgement
+### Acknowledgement
 
 Some of the code in this project is modified from the [DeepSpeed](https://github.com/microsoft/DeepSpeed) repository, we appreciate the contributions of the original repository authors.
 
