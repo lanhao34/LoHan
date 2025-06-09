@@ -10,9 +10,10 @@ import torch.multiprocessing as mp
 from time import time
 from gpt_model import GPT2Model, GPT2Config, act_stream, set_training
 from utils import priority_sort, get_act_swap_list
+from nvme_ds.utils import print_object
 
 def test_async(mp_queue_fp32, mp_queue_fp32_grad, mp_queue_signal, mp_queue_fp32_state_step, mp_queue_fp32_state_m, mp_queue_fp32_state_v, mp_model_parameters, mp_queue_fp32_state_id, mp_grad_event, mp_finish):
-    model = mp_model_parameters.get()
+    model = torch.nn.Linear(10, 10)
     model_parameters = model.parameters()
     
     optimizer_parameters = {}
@@ -26,32 +27,30 @@ def test_async(mp_queue_fp32, mp_queue_fp32_grad, mp_queue_signal, mp_queue_fp32
         if not mp_finish.empty():
             if mp_finish.get() == 'finish':
                 break
-        if not mp_queue_signal.empty():
-            temp_signal = mp_queue_signal.get()
-            if temp_signal == 555:
-                print('next step')
+        if not mp_queue_fp32_state_id.empty():
+            sub_group_id = mp_queue_fp32_state_id.get()
 
             # print(f'sub process get single {temp_signal}')
+            temp_event = mp_grad_event.get()
+            # print('bef sync', temp_event.query())
+            temp_event.synchronize()
+            # print('aft sync',temp_event.query())
+            fp32_param = mp_queue_fp32.get()
+            fp32_param.grad = mp_queue_fp32_grad.get()
+            optimizer.state[fp32_param]['step'] = mp_queue_fp32_state_step.get()
+            optimizer.state[fp32_param]['exp_avg'] = mp_queue_fp32_state_m.get()
+            optimizer.state[fp32_param]['exp_avg_sq'] = mp_queue_fp32_state_v.get()
 
-            if mp_queue_fp32_state_id.qsize():
-                temp_event = mp_grad_event.get()
-                # print('bef sync', temp_event.query())
-                temp_event.synchronize()
-                # print('aft sync',temp_event.query())
-                fp32_param = mp_queue_fp32.get()
-                fp32_param.grad = mp_queue_fp32_grad.get()
-                optimizer.state[fp32_param]['step'] = mp_queue_fp32_state_step.get()
-                optimizer.state[fp32_param]['exp_avg'] = mp_queue_fp32_state_m.get()
-                optimizer.state[fp32_param]['exp_avg_sq'] = mp_queue_fp32_state_v.get()
+            optimizer.param_groups[0]['params'] = [fp32_param]
+            # print(sub_group_id, optimizer.state[fp32_param])
 
-                optimizer.param_groups[0]['params'] = [fp32_param] 
+            cpu_step()
 
-                cpu_step()
+            optimizer.param_groups[0]['params'] = []
+            mp_queue_signal.put(sub_group_id)
 
-                optimizer.param_groups[0]['params'] = [] 
-
-                count += 1
-                # print('finish')
+            count += 1
+            # print('finish')
 
 if __name__ == '__main__':
     # 多进程初始化
@@ -73,12 +72,13 @@ if __name__ == '__main__':
     mp_list.append(mp_queue_fp32_state_step)
     mp_list.append(mp_queue_fp32_state_m)
     mp_list.append(mp_queue_fp32_state_v)
-    mp_list.append(mp_queue_fp32_state_id)
+    mp_list.append(mp_queue_fp32_state_id) # 6
     mp_list.append(mp_grad_event)
 
     ## 解析参数
     # 解析模型参数
     parser = argparse.ArgumentParser()
+    parser.add_argument("--model_size", type=str, default=None, choices=[None, '1.3B', '3B', '7B', '13B', '30B', '66B'], help="model size")
     parser.add_argument("--hidden_dim", type=int, default=5120, help="hidden dimension of transformer model")
     parser.add_argument("--num_heads", type=int, default=80, help="number of attention heads in transformer model")
     parser.add_argument("--num_layers", type=int, default=40, help="number of layers in transformer model")
@@ -103,8 +103,34 @@ if __name__ == '__main__':
     parser.add_argument("--sb_config", type=str, default='/home/lcy/flush/Ratel_Private/config.json', help="config path")
     args = parser.parse_args()
 
+    if args.model_size == '1.3B':
+        args.hidden_dim = 2048
+        args.num_heads = 32
+        args.num_layers = 24
+    elif args.model_size == '3B':
+        args.hidden_dim = 2560
+        args.num_heads = 32
+        args.num_layers = 32
+    elif args.model_size == '7B':
+        args.hidden_dim = 4096
+        args.num_heads = 32
+        args.num_layers = 32    
+    elif args.model_size == '13B':
+        args.hidden_dim = 5120
+        args.num_heads = 40
+        args.num_layers = 40
+    elif args.model_size == '30B':
+        args.hidden_dim = 7168
+        args.num_heads = 56
+        args.num_layers = 48
+    elif args.model_size == '66B':
+        args.hidden_dim = 9216
+        args.num_heads = 72
+        args.num_layers = 64
     assert args.hidden_dim % args.num_heads == 0
     args.dim_head = args.hidden_dim // args.num_heads
+    print_object(args, 'args')
+
 
     # 初始化模型config
     config = GPT2Config(
@@ -142,7 +168,7 @@ if __name__ == '__main__':
     # 多进程初始化
     if args.is_mp:
         model.share_memory()
-        mp_model_parameters.put(model)
+        # mp_model_parameters.put(model)
         p1 = mp.Process(target = test_async, args=(mp_queue_fp32, mp_queue_fp32_grad, mp_queue_signal, mp_queue_fp32_state_step, mp_queue_fp32_state_m, mp_queue_fp32_state_v, mp_model_parameters, mp_queue_fp32_state_id, mp_grad_event, mp_finish))
         p1.start()
 
@@ -158,6 +184,8 @@ if __name__ == '__main__':
 
     # 初始化CPU Adam，和优化器相关
     model_parameters = model.parameters()
+    embed_params = list(model.token_emb.parameters()) + list(model.pos_emb.parameters()) + list(model.drop.parameters())
+    sub_group_size = sum([p.ds_numel for p in embed_params])
     optimizer_parameters = {}
     optimizer = DeepSpeedCPUAdam(model_parameters,
                                         **optimizer_parameters,
@@ -166,8 +194,10 @@ if __name__ == '__main__':
     # 改造优化器，实现异步梯度卸载和异步优化器更新
     optimizer = SB_optimizer(optimizer, args.is_mp, mp_list = mp_list, is_nvme=args.is_nvme, is_grad_async=args.is_grad_async, is_nvme_async=args.is_nvme_async, is_nvme_rearrange=args.is_nvme_rearrange, config=args.sb_config)
 
+    fwd_time_list=[]
+    bck_time_list=[]
     event_list = []
-    for i in range(4):
+    for i in range(10):
         iter_start = time()
         print(f'-----------------------Iter {i}-----------------------')
         print('---begin forward---')
@@ -185,6 +215,8 @@ if __name__ == '__main__':
         act_stream.synchronize()
         forward_end = time()
         print('forward time', forward_end - iter_start)
+        fwd_time_list.append(forward_end - iter_start)
+
         loss = loss_fn(output, target)
 
         print('---begin backward---')
@@ -203,6 +235,14 @@ if __name__ == '__main__':
         global_flag_id = 0
         torch.cuda.current_stream().synchronize()
         print('back_and_opt time', time() - forward_end)
+        bck_time_list.append(time() - forward_end)
+
+    import numpy as np
+    avg_fwd_time = np.mean(fwd_time_list[-5:])
+    avg_bck_time = np.mean(bck_time_list[-5:])
+    print(f"平均前向时间是{avg_fwd_time}")
+    print(f"平均反向时间是{avg_bck_time}")
+    print(f"平均epoch时间是{avg_fwd_time + avg_bck_time}")
     
     torch.cuda.current_stream().synchronize()
     mp_finish.put('finish')

@@ -20,11 +20,11 @@ is_swap_and_recompute = 0
 
 def set_training(args):
     global act_stream, chp_id, chp_list, act_swapper, is_swap_and_recompute
+    packed = torch.empty(
+            (args.max_seq_len, args.batch_size, args.hidden_dim),
+            dtype=torch.float16,
+            pin_memory=True)
     for i in range(2 * args.num_layers):
-        packed = torch.empty(
-                (args.max_seq_len, args.batch_size, args.hidden_dim),
-                dtype=torch.float16,
-                pin_memory=True)
         # packed = torch.ones(
         #         1,
         #         dtype=torch.float16,

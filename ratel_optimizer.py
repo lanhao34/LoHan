@@ -96,6 +96,7 @@ class SB_optimizer(object):
         # 创建一个大的flat tenor管理数据, 组织到fp16_param_groups_flat
         self._create_fp16_partitions_with_defragmentation(self.init_param_groups)
         self.num_fp16_subgroups = len(self.fp16_param_groups_flat)
+        self.gradient_numel = [0] * self.num_fp16_subgroups
 
 
         if self.is_nvme:
@@ -312,6 +313,7 @@ class SB_optimizer(object):
                     # print('swap_into_buffer')
                     param.nvme_swapper.swap_into_buffer(param, dest)
                     src.data = dest.data
+                    src.nvme_status = PartitionedParamStatus.AVAILABLE
                 else:
                     assert src.nvme_status == PartitionedParamStatus.AVAILABLE, "Partitioned Param must be available here"
                     if not avoid_copy:
@@ -489,7 +491,8 @@ class SB_optimizer(object):
             if self.offload_optimizer:
                 now_event = torch.cuda.Event(interprocess=True)
                 with torch.cuda.stream(self.reduce_and_partition_stream):
-                    i, dest_offset, _ = self.grad_position[self.get_param_id(param)]
+                    i, dest_offset, numel = self.grad_position[self.get_param_id(param)]
+                    self.gradient_numel[i] += numel
                     # print(i)
 
                     self.norm_for_param_grads[self.get_param_id(param)] = self._constant_buffered_norm2(grad_buffer)
@@ -527,19 +530,24 @@ class SB_optimizer(object):
                 # print(grad_buffer.size())
                 # print('dest_offset', dest_offset)
                 # print(dest_offset + grad_buffer.numel())
-                if self.bf_i != i:
-                    # test_single()
-                    if self.is_nvme_async:
-                        self.single_step(self.bf_i, now_event)
-                        pass
-                        # torch.cuda.synchronize()
-                        # import time
-                        # time.sleep(0.5)
-                    # if self.bf_i == 1 and i == 1:
-                    #     self.bf_i = 0
-                    #     self.independent_gradient_partition_epilogue()
-                    # print('self.bf_i:', self.bf_i, 'i:', i)
-                    self.test_group = 0
+                # print(i, dest_offset, numel, self.gradient_numel[i], self.fp16_param_groups_flat_numel[i])
+                if self.gradient_numel[i] == self.fp16_param_groups_flat_numel[i]:
+                    self.bf_i = i
+                    self.gradient_numel[i] = 0
+                    self.single_step(self.bf_i, now_event)
+                # if self.bf_i != i:
+                #     # test_single()
+                #     if self.is_nvme_async:
+                #         self.single_step(self.bf_i, now_event)
+                #         pass
+                #         # torch.cuda.synchronize()
+                #         # import time
+                #         # time.sleep(0.5)
+                #     # if self.bf_i == 1 and i == 1:
+                #     #     self.bf_i = 0
+                #     #     self.independent_gradient_partition_epilogue()
+                #     # print('self.bf_i:', self.bf_i, 'i:', i)
+                #     self.test_group = 0
 
                 
                 # elif i == 1 and dest_offset + grad_buffer.numel() == 5242880:
@@ -557,19 +565,21 @@ class SB_optimizer(object):
 
                 #     self.test_group = 0
                 
-                if i == 0 and dest_offset == 0:
-                    if self.is_nvme_async:
-                        self.single_step(i, now_event)
-                        pass
-                    # print('self.bf_i:', self.bf_i, 'i:', i)
-                else:
-                    self.test_group += self.elements_in_ipg_bucket
+                # if i == 0 and dest_offset == 0:
+                #     if self.is_nvme_async:
+                #         self.single_step(i, now_event)
+                #         pass
+                #     # print('self.bf_i:', self.bf_i, 'i:', i)
+                # else:
+                #     self.test_group += self.elements_in_ipg_bucket
                 
                 bef_event = now_event
                 if i == 0 and dest_offset == 0:
                     self.bf_i = len(self.fp32_param_groups_flat) - 1
-                else:
-                    self.bf_i = i
+                # else:
+                #     if self.gradient_numel[i] == self.fp16_param_groups_flat_numel[i]:
+                #         self.bf_i = i
+                #         self.gradient_numel[i] = 0
             # free the gradient
             with torch.cuda.stream(self.reduce_and_partition_stream):
                 param.grad.record_stream(torch.cuda.current_stream())
@@ -707,11 +717,12 @@ class SB_optimizer(object):
                 cpu_memory_usage += (fp32_element_size * num_elements)
                 cpu_memory_sub_groups += 1
                 if self.is_nvme and tensor is None:
-                    unpinned_fp32_buffer = torch.empty(num_elements, device=self.device, dtype=torch.float)
-                    self._swap_in_sub_group_to_flat_buffer(unpinned_fp32_buffer, i)
-                    self.fp32_param_groups_flat.append(unpinned_fp32_buffer)
-                else:
-                    self.fp32_param_groups_flat.append(self.fp16_param_groups_flat[i].to(self.device).clone().float().detach())
+                    cpu_memory_usage += (fp32_element_size/2 * num_elements)
+                    self.fp16_param_groups_flat[i] = torch.empty(num_elements, device=self.device, dtype=torch.float16, pin_memory=True)
+                    self._move_to_flat_buffer(self.fp16_origin_param_groups[i],
+                                            self.fp16_param_groups_flat[i],
+                                            avoid_copy=not self.offload_param)
+                self.fp32_param_groups_flat.append(self.fp16_param_groups_flat[i].to(self.device).clone().float().detach())
 
 
             self.fp32_param_groups_flat[i].requires_grad = True  # keep this in case internal optimizer uses it
@@ -846,8 +857,8 @@ class SB_optimizer(object):
             swappable_param_subgroup = self.fp16_param_groups_flat[i] is None
             num_elements = int(self.fp16_param_groups_flat_numel[i])
 
-            see_memory_usage(
-                f'[Begin] Initialize optimizer states {i} / {num_subgroups} subgroups, num_elems: {num_elements}')
+            # see_memory_usage(
+            #     f'[Begin] Initialize optimizer states {i} / {num_subgroups} subgroups, num_elems: {num_elements}')
 
             # for p in [self.fp32_param_groups_flat[i]]:
             #     print('run single step')
@@ -871,10 +882,10 @@ class SB_optimizer(object):
                     subgroup_gradient_buffer = subgroup_gradient_buffer.pin_memory()
 
                 self.fp32_param_groups_flat[i].grad = subgroup_gradient_buffer
-                print('!!!!!!!!!!!')
+                # print('!!!!!!!!!!!')
             else:
                 self.fp32_param_groups_flat[i].grad = gradient_buffer.narrow(0, 0, num_elements).pin_memory()
-                print('@@@@@@@@@')
+                # print('@@@@@@@@@')
 
             # Initialize the optimizer states with the flattended fp32 partition.
 
@@ -912,15 +923,16 @@ class SB_optimizer(object):
                 self._optimizer_states_and_gradient_swap_out(i)
             
             # print(state['exp_avg'].is_pinned(), state['exp_avg_sq'].is_pinned())
-            see_memory_usage('1')
-            print(state['exp_avg'].size(), state['exp_avg_sq'].size())
-            state['exp_avg'].data  = torch.Tensor()
-            state['exp_avg_sq'].data = torch.Tensor()
-            print(state['exp_avg'].size(), state['exp_avg_sq'].size())
-            see_memory_usage('2')
+            # see_memory_usage('1')
+            # print(state['exp_avg'].size(), state['exp_avg_sq'].size())
+            if swappable_optimizer_subgroup:
+                state['exp_avg'].data  = torch.Tensor()
+                state['exp_avg_sq'].data = torch.Tensor()
+            # print(state['exp_avg'].size(), state['exp_avg_sq'].size())
+            # see_memory_usage('2')
 
-            see_memory_usage(
-                f'[End] Initialize optimizer states {i} / {num_subgroups} subgroups, num_elems: {num_elements}')
+            # see_memory_usage(
+            #     f'[End] Initialize optimizer states {i} / {num_subgroups} subgroups, num_elems: {num_elements}')
 
 
         if not self.offload_optimizer:
@@ -1050,10 +1062,11 @@ class SB_optimizer(object):
         if self.is_nvme_rearrange:
             # print('single_step 1', self.fp32_param_groups_flat[sub_group_id].grad.is_pinned())
             # print('single_step', sub_group_id)
-            if sub_group_id == len(self.fp16_origin_param_groups) - 1:
-                self._optimizer_states_and_gradient_swap_in_new(sub_group_id, True)
-            else:
-                self._optimizer_states_and_gradient_swap_in_new(sub_group_id, False)
+            if self._swappable_optimizer_subgroup(sub_group_id):
+                if sub_group_id == len(self.fp16_origin_param_groups) - 1:
+                    self._optimizer_states_and_gradient_swap_in_new(sub_group_id, True)
+                else:
+                    self._optimizer_states_and_gradient_swap_in_new(sub_group_id, False)
             
             # event.synchronize()
             if not self.is_mp :
@@ -1074,18 +1087,22 @@ class SB_optimizer(object):
                         self.mp_list[5].put(self.optimizer.state[fp32_param]['exp_avg_sq'])
                         self.mp_list[6].put(self.bf_i)
                         self.mp_list[7].put(event)
-                        self.mp_list[2].put(1)
+                        # self.mp_list[2].put(1)
                         # print('main process put single')
 
                 transfer_mul_process()
             if sub_group_id != len(self.fp16_origin_param_groups) - 1:
                 # print('realse ', sub_group_id + 1)
-                self._reassign_or_swap_out_partitioned_parameters(sub_group_id + 1)
-                self._release_sub_group_new(sub_group_id + 1, False)
+                release_sub_group_id = self.mp_list[2].get()
+                assert release_sub_group_id == sub_group_id + 1, "release_sub_group_id is not the previous sub_group_id"
+                if self._swappable_optimizer_subgroup(release_sub_group_id):
+                    self._reassign_or_swap_out_partitioned_parameters(sub_group_id + 1)
+                    self._release_sub_group_new(sub_group_id + 1, False)
 
             if sub_group_id ==  0:
+                release_sub_group_id = self.mp_list[2].get()
+                assert release_sub_group_id == sub_group_id, "release_sub_group_id is not the same as sub_group_id"
                 self._reassign_or_swap_out_partitioned_parameters(sub_group_id)
-
                 self._release_sub_group_new(sub_group_id, True)
 
         else:
