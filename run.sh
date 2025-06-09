@@ -1,4 +1,6 @@
 #!/bin/bash
+mkdir -p logs
+export TORCH_EXTENSIONS_DIR="$PWD/.torch_ext_cache"
 
 cuda_device_names=("A100" "A30")
 cuda_device_id=0
@@ -28,7 +30,7 @@ for model_size in 3B 7B 13B 30B; do
         --is_nvme  1 \
         --is_nvme_async  1 \
         --is_nvme_rearrange  1 \
-        --sb_config ./config.json
+        --sb_config ./config.json 2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE"
 done
 
 model_size=13B
@@ -49,7 +51,7 @@ for batch_size in 32 96 128; do
         --is_nvme  1 \
         --is_nvme_async  1 \
         --is_nvme_rearrange  1 \
-        --sb_config ./config.json
+        --sb_config ./config.json 2>&1 | stdbuf -oL -eL tee -a "$LOG_FILE"
 done
 
 ## for multi-GPU

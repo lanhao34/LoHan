@@ -1,3 +1,4 @@
 logs
 __pycache__
 model_info.txt
+.torch_ext_cache

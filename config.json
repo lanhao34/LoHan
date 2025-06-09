@@ -3,7 +3,7 @@
       "offload_optimizer": {
         "device": "nvme",
         "nvme_path": "/mnt/cyp/tmp1/",
-        "buffer_count": 8,
+        "buffer_count": 6,
         "pipeline_read": false,
         "pipeline_write": false,
         "pin_memory": true

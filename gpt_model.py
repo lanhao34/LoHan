@@ -36,7 +36,8 @@ def set_training(args):
     with open(args.sb_config) as f: 
         ds_config = json.load(f, object_hook=json_object_hook)
 
-    act_swapper = AsyncPartitionedActivationSwapper(ds_config, torch.float16)
+    # act_swapper = AsyncPartitionedActivationSwapper(ds_config, torch.float16)
+    act_swapper = None
     is_swap_and_recompute = args.is_swap_and_recompute
 
 @dataclass
