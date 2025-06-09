@@ -129,7 +129,7 @@ class OptimizerSwapper(object):
         self.numel_alignment = self.aligned_bytes // self.swap_element_size
 
         # Swap buffer management
-        self.largest_numel = self._io_aligned_numel(largest_numel)
+        self.largest_numel = self._io_aligned_numel(largest_numel) + self.numel_alignment * 2
         self.dtype = dtype
         self.swap_buffer_manager = SwapBufferManager(num_elems=self.largest_numel,
                                                      count=swap_config.buffer_count,
@@ -268,19 +268,26 @@ class OptimizerSwapper(object):
         unswapped_dsts = []
 
         for i, numel in enumerate(fp16_num_elems):
-            pinned_tensor, _ = fp16_swap_buffers.allocate_tensor(numel, None, numel)
+            remainder = numel % (self.numel_alignment * 2)
+            io_aligned_numel = numel + self.numel_alignment * 2 - remainder
+            pinned_tensor, _ = fp16_swap_buffers.allocate_tensor(io_aligned_numel, None, io_aligned_numel)
             if pinned_tensor is None:
                 break
 
-            swapped_fp16_tensors.append(pinned_tensor)
+            swapped_fp16_tensors.append(pinned_tensor.narrow(0, 0, numel))
             offset = 0
             for tensor, partition_numel, partition_path in fp16_partitions_info[i]:
-                dst_tensor = pinned_tensor.narrow(0, offset, partition_numel)
                 # print(partition_path)
                 if partition_path is None:
+                    dst_tensor = pinned_tensor.narrow(0, offset, partition_numel)
                     unswapped_srcs.append(tensor)
                     unswapped_dsts.append(dst_tensor)
                 else:
+                    io_aligned_partition_numel = partition_numel
+                    remainder = io_aligned_partition_numel % (self.numel_alignment * 2)
+                    if remainder != 0:
+                        io_aligned_partition_numel = io_aligned_partition_numel + self.numel_alignment * 2 - remainder
+                    dst_tensor = pinned_tensor.narrow(0, offset, io_aligned_partition_numel)
                     swap_paths.append(partition_path)
                     swap_tensors.append(dst_tensor)
                 offset += partition_numel
