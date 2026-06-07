@@ -1,4 +1,6 @@
-logs
-__pycache__
+logs/
+__pycache__/
+*.py[cod]
+*$py.class
 model_info.txt
-.torch_ext_cache
+.torch_ext_cache/
