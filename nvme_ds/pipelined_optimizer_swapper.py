@@ -6,6 +6,7 @@
 Functionality of swapping optimizer tensors to/from (NVMe) storage devices.
 """
 from op_ds.ops.op_builder.async_io import AsyncIOBuilder
+import time
 # from deepspeed.ops.op_builder import AsyncIOBuilder
 # from deepspeed import comm as dist
 
@@ -19,6 +20,7 @@ from see_mem import see_memory_usage
 import psutil
 import functools
 from logger import logger
+from ratel_stats import record_io, record_wait
 
 def see_disk_io(func):
     @functools.wraps(func)
@@ -63,7 +65,10 @@ class OptimizerSwapOp(object):
         # if self.param_info.parameter.grad is not None:
         #     print('wait 1', self.param_info.parameter.grad.is_pinned())
         assert self.wait_required
+        wait_start = time.perf_counter()
         temp = self.aio_handle.wait()
+        category = "optimizer_state.read" if self.read_op else "optimizer_state.write"
+        record_wait(category, time.perf_counter() - wait_start, ops=self.num_ops)
         # if self.param_info.parameter.grad is not None:
         #     print('wait 2', self.param_info.parameter.grad.is_pinned())
         # print(temp, self.num_ops)
@@ -294,7 +299,9 @@ class PipelinedOptimizerSwapper(OptimizerSwapper):
         # for i in swap_buffers:
         #     print(i)
         # print(swap_paths)
+        submit_start = time.perf_counter()
         swap_out_tensors(aio_handle, swap_buffers, swap_paths)
+        record_io("optimizer_state", "write_submit", time.perf_counter() - submit_start, tensors=swap_buffers)
 
         swap_out_op = OptimizerSwapOp(aio_handle=aio_handle,
                                       param_info=param_info,
@@ -339,7 +346,9 @@ class PipelinedOptimizerSwapper(OptimizerSwapper):
 
         # @see_disk_io
         def test_io(aio_handle, swap_buffers, swap_paths):
+            submit_start = time.perf_counter()
             swap_in_tensors(aio_handle, swap_buffers, swap_paths)
+            record_io("optimizer_state", "read_submit", time.perf_counter() - submit_start, tensors=swap_buffers)
         test_io(aio_handle, swap_buffers, swap_paths)
         # 计算并打印执行时间
         # if param_info.unswapped_gradients:

@@ -14,6 +14,7 @@ from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 import torch.multiprocessing as mp
 from nvme_ds.pipelined_optimizer_swapper import PipelinedOptimizerSwapper
 from nvme_ds.partitioned_optimizer_swapper import PartitionedOptimizerSwapper
+from ratel_stats import phase as stats_phase
 bef_event = torch.cuda.Event()
 class SB_optimizer(object):
     def __init__(self, 
@@ -776,10 +777,11 @@ class SB_optimizer(object):
 
         # print('!!!!!!!!!! swap_in ', sub_group_id)
         see_memory_usage(f'pre-step Before swapping in optimizer tensors {sub_group_id}', force=False)
-        self.optimizer_swapper.swap_in_optimizer_state(
-            parameter=self.fp32_param_groups_flat[sub_group_id],
-            # async_parameter=self.next_swappable_fp32_partitioned_groups[sub_group_id])
-            async_parameter=None)
+        with stats_phase("update"):
+            self.optimizer_swapper.swap_in_optimizer_state(
+                parameter=self.fp32_param_groups_flat[sub_group_id],
+                # async_parameter=self.next_swappable_fp32_partitioned_groups[sub_group_id])
+                async_parameter=None)
         see_memory_usage(f'pre-step After swapping in optimizer tensors {sub_group_id}', force=False)
 
     @nvtx_wrap
@@ -792,11 +794,12 @@ class SB_optimizer(object):
         # print('!!!!!!!!!!swap in', sub_group_id)
         see_memory_usage(f'pre-step Before swapping in optimizer tensors {sub_group_id}', force=False)
         # print('bef swap_in_optimizer_state_new', self.fp32_param_groups_flat[sub_group_id].grad.is_pinned())
-        self.optimizer_swapper.swap_in_optimizer_state_new(
-            parameter=self.fp32_param_groups_flat[sub_group_id],
-            async_parameter=self.next_swappable_fp32_partitioned_groups[sub_group_id],
-            is_first=is_first
-            )
+        with stats_phase("update"):
+            self.optimizer_swapper.swap_in_optimizer_state_new(
+                parameter=self.fp32_param_groups_flat[sub_group_id],
+                async_parameter=self.next_swappable_fp32_partitioned_groups[sub_group_id],
+                is_first=is_first
+                )
         # print('aft swap_in_optimizer_state_new', self.fp32_param_groups_flat[sub_group_id].grad.is_pinned())
         see_memory_usage(f'pre-step After swapping in optimizer tensors {sub_group_id}', force=False)
     def _partitioned_params_swap_out(self, i):
@@ -822,8 +825,9 @@ class SB_optimizer(object):
             offset += manage_param.ds_numel
 
         if len(swap_fp16_params):
-            swap_fp16_params[0].nvme_swapper.swap_out_partitioned_params(dst_fp16_params=swap_fp16_params,
-                                                                         src_fp32_params=swap_fp32_params)
+            with stats_phase("update"):
+                swap_fp16_params[0].nvme_swapper.swap_out_partitioned_params(dst_fp16_params=swap_fp16_params,
+                                                                             src_fp32_params=swap_fp32_params)
 
     def _optimizer_states_and_gradient_swap_out(self, sub_group_id):
         param_length = self.fp16_param_groups_flat_numel[sub_group_id]
@@ -833,9 +837,10 @@ class SB_optimizer(object):
 
         see_memory_usage(f'post-step Before swapping out optimizer tensors {sub_group_id}', force=False)
 
-        self.optimizer_swapper.swap_out_optimizer_state(
-            parameter=self.fp32_param_groups_flat[sub_group_id],
-            async_swap=self.next_swappable_fp32_partitioned_groups[sub_group_id] is not None)
+        with stats_phase("update"):
+            self.optimizer_swapper.swap_out_optimizer_state(
+                parameter=self.fp32_param_groups_flat[sub_group_id],
+                async_swap=self.next_swappable_fp32_partitioned_groups[sub_group_id] is not None)
 
         see_memory_usage(f'post-step After swapping out optimizer tensors {sub_group_id}', force=False)
 
@@ -969,7 +974,8 @@ class SB_optimizer(object):
             #     print("state['exp_avg'].is_shared()", state['exp_avg'].is_shared())
             #     print("state['exp_avg_sq'].is_shared()", state['exp_avg_sq'].is_shared())
             #     print(f"step = {state['step']}\nexp_avg_size = {state['exp_avg'].size()}\nexp_avg_sq_size = {state['exp_avg_sq'].size()}")
-        self.optimizer.step()
+        with stats_phase("update"):
+            self.optimizer.step()
         # see_memory_usage('BEF release')
         self.optimizer.param_groups[param_group_id]['params'] = []
         # see_memory_usage('AFT release')
@@ -1107,11 +1113,15 @@ class SB_optimizer(object):
 
         else:
             torch.cuda.synchronize()
-            self._optimizer_states_and_gradient_swap_in(sub_group_id)
+            with stats_phase("update"):
+                self._optimizer_states_and_gradient_swap_in(sub_group_id)
             event.synchronize()
-            self._optimizer_step(sub_group_id)
-            self._reassign_or_swap_out_partitioned_parameters(sub_group_id)
-            self._release_sub_group(sub_group_id)
+            with stats_phase("update"):
+                self._optimizer_step(sub_group_id)
+            with stats_phase("update"):
+                self._reassign_or_swap_out_partitioned_parameters(sub_group_id)
+            with stats_phase("update"):
+                self._release_sub_group(sub_group_id)
 
 
 
@@ -1186,10 +1196,11 @@ class SB_optimizer(object):
 
         see_memory_usage(f'post-step Before swapping out optimizer tensors {sub_group_id}', force=False)
 
-        self.optimizer_swapper.swap_out_optimizer_state_new(
-            parameter=self.fp32_param_groups_flat[sub_group_id],
-            async_swap=self.next_swappable_fp32_partitioned_groups[sub_group_id] is not None,
-            is_last=is_last)
+        with stats_phase("update"):
+            self.optimizer_swapper.swap_out_optimizer_state_new(
+                parameter=self.fp32_param_groups_flat[sub_group_id],
+                async_swap=self.next_swappable_fp32_partitioned_groups[sub_group_id] is not None,
+                is_last=is_last)
 
         see_memory_usage(f'post-step After swapping out optimizer tensors {sub_group_id}', force=False)
 

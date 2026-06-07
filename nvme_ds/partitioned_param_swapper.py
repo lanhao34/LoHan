@@ -8,6 +8,7 @@ Functionality of swapping tensors to/from (NVMe) storage devices.
 
 import os
 import shutil
+import time
 from enum import Enum
 import torch
 # from deepspeed import comm as dist
@@ -18,6 +19,7 @@ from op_ds.ops.op_builder.async_io import AsyncIOBuilder
 from nvme_ds.constants import *
 from nvme_ds.utils import swap_in_tensors, swap_out_tensors, MIN_AIO_BYTES, AIO_ALIGNED_BYTES, print_object, SwapBufferPool
 from nvtx import nvtx_wrap
+from ratel_stats import record_io, record_wait
 
 def print_rank_0(message, debug=False, force=False):
     print(message)
@@ -193,7 +195,10 @@ class AsyncPartitionedParameterSwapper(object):
     def synchronize_writes(self):
         if self.pending_writes == 0:
             return
-        assert self.pending_writes == self.aio_write_handle.wait()
+        wait_start = time.perf_counter()
+        completed = self.aio_write_handle.wait()
+        record_wait("param.write", time.perf_counter() - wait_start, ops=self.pending_writes)
+        assert self.pending_writes == completed
         self.pending_writes = 0
         self.remove_partition_and_release_buffers(self.swap_out_params)
         self.swap_out_params = []
@@ -203,7 +208,10 @@ class AsyncPartitionedParameterSwapper(object):
         if self.pending_reads == 0:
             return
 
-        assert self.pending_reads == self.aio_read_handle.wait()
+        wait_start = time.perf_counter()
+        completed = self.aio_read_handle.wait()
+        record_wait("param.read", time.perf_counter() - wait_start, ops=self.pending_reads)
+        assert self.pending_reads == completed
 
         self.pending_reads = 0
 
@@ -252,7 +260,9 @@ class AsyncPartitionedParameterSwapper(object):
         swap_out_params = self._get_swap_buffers(params)
         self._track_numel(params)
 
+        submit_start = time.perf_counter()
         swap_out_tensors(self.aio_write_handle, swap_out_params, swap_out_paths)
+        record_io("param", "write_submit", time.perf_counter() - submit_start, tensors=swap_out_params)
 
         self.pending_writes += len(swap_out_params)
         self.swap_out_params += params
@@ -305,7 +315,9 @@ class AsyncPartitionedParameterSwapper(object):
         else:
             inflight_numel = sum([t.numel() for t in swap_in_buffers])
 
+        submit_start = time.perf_counter()
         swap_in_tensors(self.aio_read_handle, swap_in_buffers, swap_in_paths)
+        record_io("param", "read_submit", time.perf_counter() - submit_start, tensors=swap_in_buffers)
 
         self._update_inflight_swap_in(params, swap_in_buffers, inflight_numel)
 
@@ -328,7 +340,9 @@ class AsyncPartitionedParameterSwapper(object):
 
         swap_in_paths = self._get_swap_paths([param])
 
+        submit_start = time.perf_counter()
         swap_in_tensors(self.aio_read_handle, swap_in_buffers, swap_in_paths)
+        record_io("param", "read_submit", time.perf_counter() - submit_start, tensors=swap_in_buffers)
         self._update_inflight_swap_in([param], swap_in_buffers, inflight_numel)
         self.synchronize_reads()
 
@@ -403,7 +417,9 @@ class AsyncPartitionedParameterSwapper(object):
             assert swap_tensor is not None
             dst_fp16_params[i].manage.nvme_status = PartitionedParamStatus.AVAILABLE
 
+        submit_start = time.perf_counter()
         self.partitioned_swap_pool.swap_out(self.aio_write_handle)
+        record_io("param", "write_submit", time.perf_counter() - submit_start)
         
         
         for param in dst_fp16_params:

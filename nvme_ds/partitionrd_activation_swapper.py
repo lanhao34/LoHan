@@ -1,5 +1,6 @@
 import os
 import shutil
+import time
 from enum import Enum
 import torch
 # from deepspeed import comm as dist
@@ -9,6 +10,7 @@ from op_ds.ops.op_builder.async_io import AsyncIOBuilder
 from nvme_ds.constants import *
 from nvme_ds.utils import swap_in_tensors, swap_out_tensors, MIN_AIO_BYTES, AIO_ALIGNED_BYTES, print_object, SwapBufferPool
 from nvtx import nvtx_wrap
+from ratel_stats import record_io, record_wait
 
 def print_rank_0(message, debug=False, force=False):
     print(message)
@@ -177,7 +179,10 @@ class AsyncPartitionedActivationSwapper(object):
     def synchronize_writes(self):
         if self.pending_writes == 0:
             return
-        assert self.pending_writes == self.aio_write_handle.wait()
+        wait_start = time.perf_counter()
+        completed = self.aio_write_handle.wait()
+        record_wait("activation.write", time.perf_counter() - wait_start, ops=self.pending_writes)
+        assert self.pending_writes == completed
         self.pending_writes = 0
         self.remove_activation_and_release_buffers(self.swap_out_acts)
         self.swap_out_acts = []
@@ -187,7 +192,10 @@ class AsyncPartitionedActivationSwapper(object):
         if self.pending_reads == 0:
             return
 
-        assert self.pending_reads == self.aio_read_handle.wait()
+        wait_start = time.perf_counter()
+        completed = self.aio_read_handle.wait()
+        record_wait("activation.read", time.perf_counter() - wait_start, ops=self.pending_reads)
+        assert self.pending_reads == completed
 
         self.pending_reads = 0
 
@@ -234,7 +242,9 @@ class AsyncPartitionedActivationSwapper(object):
         swap_out_params = self._get_swap_buffers(act_block)
         self._track_numel(act_block)
 
+        submit_start = time.perf_counter()
         swap_out_tensors(self.aio_write_handle, swap_out_params, swap_out_paths)
+        record_io("activation", "write_submit", time.perf_counter() - submit_start, tensors=swap_out_params)
 
         self.pending_writes += len(swap_out_params)
         self.swap_out_acts.append(act_block)
@@ -288,7 +298,9 @@ class AsyncPartitionedActivationSwapper(object):
             inflight_numel = sum([t.numel() for t in swap_in_buffers])
 
         # print(self.aio_read_handle, swap_in_buffers, swap_in_paths)
+        submit_start = time.perf_counter()
         swap_in_tensors(self.aio_read_handle, swap_in_buffers, swap_in_paths)
+        record_io("activation", "read_submit", time.perf_counter() - submit_start, tensors=swap_in_buffers)
 
         self._update_inflight_swap_in(act_block, swap_in_buffers, inflight_numel)
 
@@ -311,7 +323,9 @@ class AsyncPartitionedActivationSwapper(object):
 
         swap_in_paths = self._get_swap_paths(act_block)
 
+        submit_start = time.perf_counter()
         swap_in_tensors(self.aio_read_handle, swap_in_buffers, swap_in_paths)
+        record_io("activation", "read_submit", time.perf_counter() - submit_start, tensors=swap_in_buffers)
         self._update_inflight_swap_in(act_block, swap_in_buffers, inflight_numel)
         self.synchronize_reads()
 
@@ -386,10 +400,11 @@ class AsyncPartitionedActivationSwapper(object):
             assert swap_tensor is not None
             dst_fp16_params[i].nvme_status = PartitionedActStatus.AVAILABLE
 
+        submit_start = time.perf_counter()
         self.partitioned_swap_pool.swap_out(self.aio_write_handle)
+        record_io("activation", "write_submit", time.perf_counter() - submit_start)
         
         
         for param in dst_fp16_params:
             param.nvme_status = PartitionedActStatus.NOT_AVAILABLE
     
-

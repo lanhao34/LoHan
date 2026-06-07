@@ -208,6 +208,31 @@ class save_on_cpu(saved_tensors_hooks):
         self.stream = act_stream
         self.chp_id = chp_id
         self.chp_list = chp_list
+        self.act_swapper = act_swapper
+
+        def _convert_to_manage_act(act_block, tensor, chp_id_value):
+            act_block.nvme_status = PartitionedActStatus.AVAILABLE
+            act_block.sb_shape = tensor.shape
+            act_block.sb_numel = tensor.numel()
+            act_block.manage = None
+            act_block.id = chp_id_value
+
+            def summary(slf: torch.Tensor) -> dict:
+                return {
+                    "id": slf.id,
+                    "status": slf.nvme_status,
+                    "numel": slf.sb_numel,
+                    "sb_shape": tuple(slf.sb_shape),
+                }
+
+            act_block.summary = types.MethodType(summary, act_block)
+
+        def _ensure_availability_of_partitioned_acts(act_block):
+            if act_block.nvme_status == PartitionedActStatus.NOT_AVAILABLE:
+                self.act_swapper.swap_in(act_block, async_op=False)
+            elif act_block.nvme_status == PartitionedActStatus.INFLIGHT:
+                self.act_swapper.synchronize_reads()
+
         def pack_to_cpu(tensor):
             if not pin_memory:
                 return (tensor.device, tensor.cpu())
@@ -222,8 +247,29 @@ class save_on_cpu(saved_tensors_hooks):
             
                 packed.copy_(tensor)
                 return (tensor.device, packed)
-            # print(self.chp_id[0])
             packed = self.chp_list[self.chp_id[0]]
+            if self.act_swapper is not None:
+                _convert_to_manage_act(packed, tensor, self.chp_id[0])
+                tensor_size = tensor.numel()
+                if self.act_swapper.swappable_tensor(numel=tensor_size):
+                    buffer = self.act_swapper.get_buffer(packed, tensor_size)
+                    partitioned_tensor = torch.empty(1, dtype=tensor.dtype, device=buffer.device)
+                    partitioned_tensor.data = buffer.data
+                else:
+                    partitioned_tensor = torch.empty(
+                        tensor.size(),
+                        dtype=tensor.dtype,
+                        layout=tensor.layout,
+                        pin_memory=(torch.cuda.is_available() and not tensor.is_sparse))
+                packed.manage = partitioned_tensor.view(tensor.shape)
+                with torch.cuda.stream(self.stream):
+                    self.pre_pack_event.record(stream=torch.cuda.current_stream())
+                    self.pre_pack_event.synchronize()
+                    packed.manage.copy_(tensor, non_blocking=False)
+                self.act_swapper.swap_out_and_release(packed)
+                self.chp_id[0] += 1
+                return (tensor.device, packed)
+
             self.chp_id[0] += 1
             # packed = torch.empty(
             #     tensor.size(),
@@ -242,6 +288,19 @@ class save_on_cpu(saved_tensors_hooks):
 
         def unpack_from_cpu(packed):
             device, tensor = packed
+
+            if self.act_swapper is not None and hasattr(tensor, "nvme_status"):
+                self.pre_unpack_event.record(stream=torch.cuda.default_stream())
+                with torch.cuda.stream(self.stream):
+                    self.pre_unpack_event.synchronize()
+                    _ensure_availability_of_partitioned_acts(tensor)
+                    tensor.manage = tensor.manage.view(tensor.sb_shape)
+                    result = tensor.manage.to(device, non_blocking=False)
+                    self.post_unpack_event.record(stream=self.stream)
+                self.post_unpack_event.synchronize()
+                self.act_swapper.remove_activation_and_release_buffers([tensor])
+                self.chp_id[0] -= 1
+                return result
 
             if tensor.size() == torch.Size([0]):
                 device, tensor = packed

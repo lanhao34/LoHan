@@ -20,15 +20,16 @@ is_swap_and_recompute = 0
 
 def set_training(args):
     global act_stream, chp_id, chp_list, act_swapper, is_swap_and_recompute
-    packed = torch.empty(
-            (args.max_seq_len, args.batch_size, args.hidden_dim),
-            dtype=torch.float16,
-            pin_memory=True)
+    chp_id[0] = 0
+    chp_list.clear()
     for i in range(2 * args.num_layers):
-        # packed = torch.ones(
-        #         1,
-        #         dtype=torch.float16,
-        #         pin_memory=True)
+        if args.activation_offload_device == "nvme":
+            packed = torch.empty((0,), dtype=torch.float16, pin_memory=True)
+        else:
+            packed = torch.empty(
+                    (args.max_seq_len, args.batch_size, args.hidden_dim),
+                    dtype=torch.float16,
+                    pin_memory=True)
         chp_list.append(packed)
 
     def json_object_hook(d): 
@@ -36,8 +37,10 @@ def set_training(args):
     with open(args.sb_config) as f: 
         ds_config = json.load(f, object_hook=json_object_hook)
 
-    # act_swapper = AsyncPartitionedActivationSwapper(ds_config, torch.float16)
-    act_swapper = None
+    if args.activation_offload_device == "nvme":
+        act_swapper = AsyncPartitionedActivationSwapper(ds_config, torch.float16)
+    else:
+        act_swapper = None
     is_swap_and_recompute = args.is_swap_and_recompute
 
 @dataclass

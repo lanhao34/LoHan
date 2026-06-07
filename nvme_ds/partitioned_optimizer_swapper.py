@@ -7,6 +7,7 @@ Functionality of swapping optimizer tensors to/from (NVMe) storage devices.
 """
 
 import torch
+import time
 
 from op_ds.utils.logging import logger
 # from deepspeed.ops.op_builder import AsyncIOBuilder
@@ -17,6 +18,7 @@ from nvme_ds.utils import swap_in_tensors, swap_out_tensors, print_object, \
     get_sized_buffers
 from nvme_ds.async_swapper import AsyncTensorSwapper
 from nvme_ds.optimizer_utils import OptimizerSwapper
+from ratel_stats import record_io, record_wait
 
 DEBUG_MODE = False
 
@@ -99,8 +101,13 @@ class PartitionedOptimizerSwapper(OptimizerSwapper):
         WRITE_TIMER = 'swap_submit_write'
         self._start_timer(WRITE_TIMER)
 
+        submit_start = time.perf_counter()
         swap_out_tensors(self.aio_handle, pinned_tensors, pinned_paths)
-        assert self.aio_handle.wait() == len(pinned_tensors)
+        record_io("optimizer_state", "write_submit", time.perf_counter() - submit_start, tensors=pinned_tensors)
+        wait_start = time.perf_counter()
+        completed = self.aio_handle.wait()
+        record_wait("optimizer_state.write", time.perf_counter() - wait_start, ops=len(pinned_tensors))
+        assert completed == len(pinned_tensors)
         for t in pinned_tensors:
             t.data = torch.Tensor()
 
@@ -146,13 +153,17 @@ class PartitionedOptimizerSwapper(OptimizerSwapper):
         WAIT_TIMER = 'swap_wait_read_param'
 
         self._start_timer(READ_TIMER)
+        submit_start = time.perf_counter()
         swap_in_tensors(aio_handle, swap_buffers, swap_info.swap_paths)
+        record_io("optimizer_state", "read_submit", time.perf_counter() - submit_start, tensors=swap_buffers)
         self._stop_timer(READ_TIMER)
 
         swap_bytes = sum([buffer.numel() * buffer.element_size() for buffer in swap_buffers])
 
         self._start_timer(WAIT_TIMER)
+        wait_start = time.perf_counter()
         x = aio_handle.wait()
+        record_wait("optimizer_state.read", time.perf_counter() - wait_start, ops=len(swap_buffers))
         # print(x)
         self._stop_timer(WAIT_TIMER)
 
@@ -190,11 +201,16 @@ class PartitionedOptimizerSwapper(OptimizerSwapper):
         SWAP_WAIT_GRADIENTS = 'swap_submit_wait_gradient'
 
         self._start_timer(SWAP_READ_GRADIENTS)
+        submit_start = time.perf_counter()
         swap_in_tensors(aio_handle, swap_buffers, swap_paths)
+        record_io("gradient", "read_submit", time.perf_counter() - submit_start, tensors=swap_buffers)
         self._stop_timer(SWAP_READ_GRADIENTS)
 
         self._start_timer(SWAP_WAIT_GRADIENTS)
-        assert len(swap_buffers) == aio_handle.wait()
+        wait_start = time.perf_counter()
+        completed = aio_handle.wait()
+        record_wait("gradient.read", time.perf_counter() - wait_start, ops=len(swap_buffers))
+        assert len(swap_buffers) == completed
         self._stop_timer(SWAP_WAIT_GRADIENTS)
 
         self._log_timers([SWAP_READ_GRADIENTS, SWAP_WAIT_GRADIENTS])

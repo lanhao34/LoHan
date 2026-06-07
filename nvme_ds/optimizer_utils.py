@@ -7,6 +7,7 @@ Functionality of swapping tensors to/from (NVMe) storage devices.
 """
 
 import os
+import time
 import torch
 
 # from deepspeed import comm as dist
@@ -17,6 +18,7 @@ from nvme_ds.utils import swap_in_tensors, swap_out_tensors, \
 from nvme_ds.utils import SwapBufferManager, SwapBufferPool
 from nvtx import nvtx_wrap
 from see_mem import see_memory_usage
+from ratel_stats import record_io, record_wait
 class FlattenedTensorSwapInfo(object):
 
     def __init__(self, path, length, offset):
@@ -207,7 +209,9 @@ class OptimizerSwapper(object):
                 gradient_swapper.add_buffers(pinned_buffers)
 
             swappable_paths = swap_info.get_or_create_gradient_paths(swappable_offsets, swappable_lengths)
+            submit_start = time.perf_counter()
             gradient_swapper.swap_out_tensors(tensor_list=swappable_tensors, path_list=swappable_paths)
+            record_io("gradient", "write_submit", time.perf_counter() - submit_start, tensors=swappable_tensors)
 
         self._stop_timer(SWAP_OUT_GRADIENT_TIMER)
         self.timer_names.add(SWAP_OUT_GRADIENT_TIMER)
@@ -293,12 +297,17 @@ class OptimizerSwapper(object):
                 offset += partition_numel
 
         assert len(swapped_fp16_tensors) + len(unswapped_srcs) > 0
+        submit_start = time.perf_counter()
         ret = swap_in_tensors(aio_handle, swap_tensors, swap_paths)
+        record_io("param_init", "read_submit", time.perf_counter() - submit_start, tensors=swap_tensors)
         for src, dst in zip(unswapped_srcs, unswapped_dsts):
             # print('copying')
             dst.data.copy_(src.data)
 
-        assert len(swap_tensors) == aio_handle.wait()
+        wait_start = time.perf_counter()
+        completed = aio_handle.wait()
+        record_wait("param_init.read", time.perf_counter() - wait_start, ops=len(swap_tensors))
+        assert len(swap_tensors) == completed
 
         return swapped_fp16_tensors
 
@@ -379,9 +388,14 @@ class OptimizerSwapper(object):
 
 
             swap_paths = dest_paths[i:(i + swap_tensor_count)]
+            submit_start = time.perf_counter()
             swap_out_tensors(aio_handle, swap_buffers, swap_paths)
+            record_io("param_init", "write_submit", time.perf_counter() - submit_start, tensors=swap_buffers)
 
-            assert aio_handle.wait() == swap_tensor_count
+            wait_start = time.perf_counter()
+            completed = aio_handle.wait()
+            record_wait("param_init.write", time.perf_counter() - wait_start, ops=swap_tensor_count)
+            assert completed == swap_tensor_count
 
     def _adjust_for_misaligned_lengths(self, tensors, offsets):
         new_tensors = []
