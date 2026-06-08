@@ -57,7 +57,7 @@ def new_forward(
         x = self.input_layernorm(x)
         # Self Attention
         x, _ = self.self_attn(
-            hidden_states=x,
+            x,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,

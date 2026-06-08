@@ -2,7 +2,7 @@
     "zero_config": {
       "offload_optimizer": {
         "device": "nvme",
-        "nvme_path": "/mnt/cyp/tmp1/",
+        "nvme_path": "/mnt/nvme8b_helix_aio/offload/ratel",
         "buffer_count": 6,
         "pipeline_read": false,
         "pipeline_write": false,
@@ -10,7 +10,7 @@
       },
       "offload_param": {
         "device": "nvme",
-        "nvme_path": "/mnt/cyp/tmp1/",
+        "nvme_path": "/mnt/nvme8b_helix_aio/offload/ratel",
         "pin_memory": true,
         "buffer_count": 6,
         "buffer_size": 1.2e9,
@@ -18,7 +18,7 @@
       },
       "offload_act": {
         "device": "nvme",
-        "nvme_path": "/mnt/cyp/tmp1/",
+        "nvme_path": "/mnt/nvme8b_helix_aio/offload/ratel",
         "pin_memory": true,
         "buffer_count": 4,
         "buffer_size": 1.2e9,
