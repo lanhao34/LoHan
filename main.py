@@ -256,6 +256,10 @@ if __name__ == '__main__':
     parser.add_argument("--aio_pipeline_read", type=lambda value: str(value).lower() in {"1", "true", "yes", "on"}, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--aio_pipeline_write", type=lambda value: str(value).lower() in {"1", "true", "yes", "on"}, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.last_n <= 0:
+        raise ValueError("last_n must be positive")
+    if args.steps <= args.last_n + 3:
+        raise ValueError(f"steps must be greater than last_n + 3 for benchmark statistics: steps={args.steps} last_n={args.last_n}")
     _prepare_runtime_config(args)
 
     model_kind, config, model_factory, act_stream, set_training = _configure_model(args)
@@ -392,8 +396,8 @@ if __name__ == '__main__':
 
     import numpy as np
     tail = args.last_n
-    avg_fwd_time = np.mean(fwd_time_list[-tail:])
-    avg_bck_time = np.mean(bck_time_list[-tail:])
+    avg_fwd_time = np.mean(fwd_time_list[:-1][-tail:])
+    avg_bck_time = np.mean(bck_time_list[:-1][-tail:])
     print(f"平均前向时间是{avg_fwd_time}")
     print(f"平均反向时间是{avg_bck_time}")
     print(f"平均epoch时间是{avg_fwd_time + avg_bck_time}")
